@@ -3,7 +3,6 @@
 
 import Prelude
 import Data.Sort as Sort
-import Data.Set as Set
 import Data.HashSet as HashSet
 import Data.HashMap.Strict as HashMap
 import Data.Map as Map
