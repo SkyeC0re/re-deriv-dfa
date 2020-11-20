@@ -186,7 +186,7 @@ ttConstruct tt alph (x:xs) r =
     let sdr = simplify (deriv r x)
         tt1 = case (HashMap.lookup sdr tt) of
                 Nothing -> ttConstruct (HashMap.insert sdr (HashMap.empty) (HashMap.adjust (HashMap.insert x sdr) r  tt)) alph alph sdr
-                Just st -> (HashMap.adjust (HashMap.insert x sdr) r  tt)
+                Just st -> HashMap.adjust (HashMap.insert x sdr) r  tt
     in ttConstruct tt1 alph xs r
 
 isMinimalDfa::(Ord st, Eq sy) => Dfa st sy -> Bool
@@ -195,8 +195,66 @@ isMinimalDfa  dfa = Dfa.sizeDfa (Min.minimizeDfa dfa) == Dfa.sizeDfa dfa
 isMinimalRe:: Regex -> Bool
 isMinimalRe r = r == (simplify r)
 
---grow:: Int -> Int -> Regex -> [Regex]
---grow mxln crln 
+mergeSingle:: Int -> Regex -> Regex -> [Regex]
+mergeSingle l r s
+    | (sizeRe r) + (sizeRe s) + 1 <= l = if
+            | r == s -> if
+                | isMinimalRe (Dot r s) -> [Dot r s]
+                | otherwise -> []
+            | r <= s ->
+                let lst = if
+                        | isMinimalRe (Union r s) -> [Union r s]
+                        | otherwise -> []
+                    lst2 = if
+                        | isMinimalRe (Intersect r s) -> [Intersect r s] ++ lst
+                        | otherwise -> lst
+                    lst3 = if
+                        | isMinimalRe (Dot r s) -> [Dot r s] ++ lst2
+                        | otherwise -> lst2
+                in lst3
+            | otherwise ->  
+                let lst = if
+                        | isMinimalRe (Union s r) -> [Union s r]
+                        | otherwise -> []
+                    lst2 = if
+                        | isMinimalRe (Intersect s r) -> [Intersect s r] ++ lst
+                        | otherwise -> lst
+                    lst3 = if
+                        | isMinimalRe (Dot s r) -> [Dot s r] ++ lst2
+                        | otherwise -> lst2
+                in lst3
+    | otherwise = []
+
+applySingle:: Int -> Regex -> [Regex]
+applySingle l r
+    | (sizeRe r) + 1 <= l = 
+        let lst = if
+                | isMinimalRe (Star r) -> [Star r]
+                | otherwise -> []
+            lst2 = if
+                | isMinimalRe (Not r) -> [Not r] ++ lst
+                | otherwise -> lst
+        in lst2
+    | otherwise = []
+
+mergeLeft:: Int -> Regex -> [Regex] -> [Regex]
+mergeLeft l r (s:ss) = (mergeSingle l r s) ++ (mergeLeft l r ss)
+mergeLeft _ _ _ = []
+
+mergeGrowNN:: Int -> [Regex] -> [Regex]
+mergeGrowNN l (r:rs) = (applySingle l r) ++ (mergeLeft l r (r:rs)) ++ (mergeGrowNN l rs)
+mergeGrowNN _ _ = []
+
+mergeGrowNO:: Int -> [Regex] -> [Regex] -> [Regex]
+mergeGrowNO l (r:rs) lst = (mergeLeft l r lst) ++ (mergeGrowNO l rs lst)
+mergeGrowNO _ _ _ = []
+
+mergeGrow:: Int -> [Regex] -> [Regex] -> [Regex]
+mergeGrow _ [] old = old
+mergeGrow l new old = mergeGrow l ((mergeGrowNN l new) ++ (mergeGrowNO l new old)) (old ++ new) 
+
+growDisimilarList:: Int -> [Regex]
+growDisimilarList l = mergeGrow l [Empty, Eps, CharSet (HashSet.singleton 'a'), CharSet (HashSet.singleton 'b'), CharSet (HashSet.fromList "ab")] []
 
 computeAmounts:: Amounts -> Int -> Regex -> Amounts
 computeAmounts (Amounts dsm m) l r = (Amounts dsm m)
@@ -204,7 +262,9 @@ computeAmounts (Amounts dsm m) l r = (Amounts dsm m)
 main = do
     let x = (CharSet $ HashSet.singleton 'a')
     let y = Union (CharSet $ HashSet.singleton 'a') (Dot Eps Eps)
-    let dfa = constructDfa ['a', 'b'] x
+    let dfa = constructDfa ['a', 'b'] y
     let minDfa = Min.minimizeDfa dfa
     let sz = Dfa.sizeDfa dfa
-    print (dfa)
+    let lst = growDisimilarList 6
+    --print (length (Sort.uniqueSort lst) == length lst) 
+    print (length lst)
