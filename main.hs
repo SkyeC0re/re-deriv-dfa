@@ -9,6 +9,10 @@ import Data.Map as Map
 import Language.HaLex.Dfa as Dfa
 import Data.Hashable as Hashable
 import GHC.Generics (Generic)
+import Language.HaLex.Minimize as Min
+import Language.HaLex.FaAsDiGraph as Viz
+
+data Amounts = Amounts Integer Integer
 
 data Regex  = Empty
             | Eps
@@ -60,6 +64,16 @@ instance Ord Regex where
 
 instance Hashable Regex
 
+sizeRe:: Regex -> Int
+sizeRe Empty = 1
+sizeRe Eps = 1
+sizeRe (CharSet _) = 1
+sizeRe (Not r) = 1 + (sizeRe r)
+sizeRe (Star r) = 1 + (sizeRe r)
+sizeRe (Intersect r1 r2) = 1 + (sizeRe r1) + (sizeRe r2)
+sizeRe (Union r1 r2) = 1 + (sizeRe r1) + (sizeRe r2)
+sizeRe (Dot r1 r2) =  1 + (sizeRe r1) + (sizeRe r2)
+
 invertNull:: Regex -> Regex
 invertNull Empty = Eps
 invertNull Eps = Empty
@@ -83,8 +97,8 @@ deriv (Star r) sy = Dot (deriv r sy) (Star r)
 deriv (Union r1 r2) sy = Union (deriv r1 sy) (deriv r2 sy)
 deriv (Intersect r1 r2) sy = Intersect (deriv r1 sy) (deriv r2 sy)
 deriv (Not r) sy = Not (deriv r sy)
-deriv _ _ = Empty
-
+deriv Empty _ = Empty
+deriv Eps _ = Empty
 simplifyUnion:: Regex -> Regex
 simplifyUnion union = unpackUnionList (Sort.uniqueSort (simplifiedUnionList union))
 
@@ -154,33 +168,43 @@ findTransition tt def inst sy = case (HashMap.lookup inst tt) of
     Nothing -> def
     Just trans -> case (HashMap.lookup sy trans) of
                     Nothing -> def
-                    Just outst -> outst 
+                    Just outst -> outst
 
 constructDfa:: [Char] -> Regex -> (Dfa Regex Char)
 constructDfa alph r = 
     let sr = simplify r
-        tt = HashMap.singleton sr (HashMap.empty)
+        tt = ttConstruct (HashMap.singleton sr (HashMap.empty)) alph alph sr
         fs = if
             | HashMap.member Eps tt -> [Eps]
             | otherwise -> []
         sts = HashMap.keys tt
     in Dfa alph sts sr fs (findTransition tt Empty)
-        
-
 
 ttConstruct:: (HashMap Regex (HashMap Char Regex)) -> [Char] -> [Char] -> Regex -> (HashMap Regex (HashMap Char Regex))
 ttConstruct tt alph [] r = tt
 ttConstruct tt alph (x:xs) r =
     let sdr = simplify (deriv r x)
-        tt = case (HashMap.lookup sdr tt) of
-                Nothing -> ttConstruct (HashMap.insert r (HashMap.singleton x sdr) tt) alph alph sdr
-                Just st -> HashMap.insert r (HashMap.insert x sdr st) tt
-    in ttConstruct tt alph xs r       
+        tt1 = case (HashMap.lookup sdr tt) of
+                Nothing -> ttConstruct (HashMap.insert sdr (HashMap.empty) (HashMap.adjust (HashMap.insert x sdr) r  tt)) alph alph sdr
+                Just st -> (HashMap.adjust (HashMap.insert x sdr) r  tt)
+    in ttConstruct tt1 alph xs r
 
-          
+isMinimalDfa::(Ord st, Eq sy) => Dfa st sy -> Bool
+isMinimalDfa  dfa = Dfa.sizeDfa (Min.minimizeDfa dfa) == Dfa.sizeDfa dfa
+
+isMinimalRe:: Regex -> Bool
+isMinimalRe r = r == (simplify r)
+
+--grow:: Int -> Int -> Regex -> [Regex]
+--grow mxln crln 
+
+computeAmounts:: Amounts -> Int -> Regex -> Amounts
+computeAmounts (Amounts dsm m) l r = (Amounts dsm m)
 
 main = do
-    let x = Union Empty Eps
-    let y = Union (CharSet $ HashSet.singleton 'c') (Dot Eps Eps)
-    let dfa = constructDfa ['a', 'b'] y
-    print (y)
+    let x = (CharSet $ HashSet.singleton 'a')
+    let y = Union (CharSet $ HashSet.singleton 'a') (Dot Eps Eps)
+    let dfa = constructDfa ['a', 'b'] x
+    let minDfa = Min.minimizeDfa dfa
+    let sz = Dfa.sizeDfa dfa
+    print (dfa)
