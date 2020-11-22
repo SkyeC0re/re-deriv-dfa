@@ -24,7 +24,23 @@ data Regex  = Empty
             | Dot Regex Regex
             deriving (Show, Generic, Ord, Eq)
 
-data DfaVars = DfaVars ([Char]) (HashMap Regex (HashMap Char Regex))
+data RegexSerial = Invalid 
+                 | EndSerial
+                 | SEmpty RegexSerial
+                 | SEps RegexSerial
+                 | SCharSet (HashSet Char) RegexSerial
+                 | SNot RegexSerial
+                 | SStar RegexSerial
+                 | SIntersect RegexSerial
+                 | SUnion RegexSerial
+                 | SDot RegexSerial
+                 deriving (Show, Ord, Eq)
+
+data ConsumedInfo = ConsumedInfo (Maybe Regex) RegexSerial
+
+data Attributes = Attributes Integer Integer Int
+                | Default
+                deriving (Show)
 
 -- | Hashability is reguired to store unique states in a set
 instance Hashable Regex
@@ -210,6 +226,7 @@ simplified (Not r) = simplified r
 simplified (Star r) = simplified r
 simplified _ = True
 
+
 -- A constructor for delta transition function using an underlying transition table and a 
 -- default 'Regex' return in case a transition is absent in the table.
 findTransition:: (HashMap Regex (HashMap Char Regex)) -> Regex -> Regex -> Char -> Regex
@@ -317,7 +334,7 @@ mergeGrowNO _ _ _ = []
 -- | Grows a list of dissimilar REs up to a given size recursively.
 mergeGrow:: Int -> [Regex] -> [Regex] -> [Regex]
 mergeGrow _ [] old = old
-mergeGrow l new old = mergeGrow l ((mergeGrowNN l new) ++ (mergeGrowNO l new old)) (old ++ new) 
+mergeGrow l new old = mergeGrow l ((mergeGrowNN l new) ++ (mergeGrowNO l new old)) (old ++ new)
 
 -- | Grows a list of dissimilar REs up to the given size, using the elementary blocks:
 --      - Empty
@@ -325,8 +342,8 @@ mergeGrow l new old = mergeGrow l ((mergeGrowNN l new) ++ (mergeGrowNO l new old
 --      - a
 --      - b
 --      - [a-b]
-growDisimilarList:: Int -> [Regex]
-growDisimilarList l = mergeGrow l [Empty, Eps, CharSet (HashSet.singleton 'a'), CharSet (HashSet.singleton 'b'), CharSet (HashSet.fromList "ab")] []
+growDissimilarList:: Int -> [Regex]
+growDissimilarList l = mergeGrow l [Empty, Eps, CharSet (HashSet.singleton 'a'), CharSet (HashSet.singleton 'b'), CharSet (HashSet.fromList "ab")] []
 
 -- | Counts the amount of minimal DFAs constructed from a RE list, given some alphabet.
 countMinimalDfas:: [Char] -> [Regex] -> Int
@@ -336,11 +353,129 @@ countMinimalDfas alph (r:rs)
     | otherwise = countMinimalDfas alph rs
 
 -- | Prints all elements in list in their own line.
-printElements :: (Show a) => [a] -> IO()
+printElements:: (Show a) => [a] -> IO()
 printElements = mapM_ print
+
+
+-- | INTERNAL. Helper function for 'serialToRegex'
+consumeRegexSerial:: RegexSerial -> ConsumedInfo
+consumeRegexSerial (SEmpty ser) = ConsumedInfo (Just Empty) ser
+consumeRegexSerial (SEps ser) = ConsumedInfo (Just Eps) ser
+consumeRegexSerial (SCharSet hs ser) = ConsumedInfo (Just (CharSet hs)) ser
+consumeRegexSerial EndSerial = ConsumedInfo Nothing EndSerial
+consumeRegexSerial (SNot ser) = 
+    case (consumeRegexSerial ser) of
+        ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+        ConsumedInfo (Just nr) ser1 -> ConsumedInfo (Just (Not nr)) ser1
+consumeRegexSerial (SStar ser) = 
+    case (consumeRegexSerial ser) of
+        ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+        ConsumedInfo (Just nr) ser1 -> ConsumedInfo (Just (Star nr)) ser1
+consumeRegexSerial (SUnion ser) = 
+    case (consumeRegexSerial ser) of
+        ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+        ConsumedInfo (Just nr1) ser1 -> 
+            case (consumeRegexSerial ser1) of 
+                ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+                ConsumedInfo (Just nr2) ser2 -> ConsumedInfo (Just (Union nr1 nr2)) ser2
+consumeRegexSerial (SIntersect ser) = 
+    case (consumeRegexSerial ser) of
+        ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+        ConsumedInfo (Just nr1) ser1 -> 
+            case (consumeRegexSerial ser1) of 
+                ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+                ConsumedInfo (Just nr2) ser2 -> ConsumedInfo (Just (Intersect nr1 nr2)) ser2
+consumeRegexSerial (SDot ser) = 
+    case (consumeRegexSerial ser) of
+        ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+        ConsumedInfo (Just nr1) ser1 -> 
+            case (consumeRegexSerial ser1) of 
+                ConsumedInfo Nothing _ -> ConsumedInfo Nothing EndSerial
+                ConsumedInfo (Just nr2) ser2 -> ConsumedInfo (Just (Dot nr1 nr2)) ser2
+
+-- | Turns a serialized RE into an RE, uses Maybe to accomodate invalid serial REs. 
+serialToRegex:: RegexSerial -> (Maybe Regex)
+serialToRegex ser =
+    case (consumeRegexSerial ser) of
+        ConsumedInfo (Just r) EndSerial -> (Just r)
+        ConsumedInfo _ _ -> Nothing
+
+-- | Ignore : Not Used 
+countAttribute':: Int -> [HashSet Char] -> a -> (Regex -> a) -> (a -> a -> a) -> RegexSerial -> [HashSet Char] -> a
+countAttribute' 0 _ idElem f g ser _ = case serialToRegex ser of
+                Just r -> f r
+                Nothing -> idElem
+countAttribute' d alph idElem f g ser [] = 
+    let a1 = case serialToRegex ser of
+                Just r -> f r
+                Nothing -> idElem
+        dm1 = d - 1
+        out =  ((g (countAttribute' dm1 alph idElem f g (SEmpty ser) alph))
+            .  (g (countAttribute' dm1 alph idElem f g (SEps ser) alph))
+            .  (g (countAttribute' dm1 alph idElem f g (SNot ser) alph))
+            .  (g (countAttribute' dm1 alph idElem f g (SStar ser) alph))
+            .  (g (countAttribute' dm1 alph idElem f g (SUnion ser) alph))
+            .  (g (countAttribute' dm1 alph idElem f g (SIntersect ser) alph))
+            .  (g (countAttribute' dm1 alph idElem f g (SDot ser) alph))) a1
+    in out
+countAttribute' d alph idElem f g ser (c:cs) = g (countAttribute' (d-1) alph idElem f g (SCharSet c ser) alph) (countAttribute' d alph idElem f g ser cs)
+
+-- | Ignore: Not Used
+countAttribute:: Int -> [HashSet Char] -> a -> (Regex -> a) -> (a -> a -> a) -> a
+countAttribute d alph idElem f g = countAttribute' d alph idElem f g EndSerial alph
+
+-- | INTERNAL: Helper function for 'growDisimilarListSerial'
+growDissimilarListSerial':: Int -> [HashSet Char] -> [HashSet Char] -> RegexSerial -> ([Regex] -> [Regex])
+growDissimilarListSerial' 0 _ _ ser = case serialToRegex ser of
+    Just r -> if simplified r then ([r] ++) else ([] ++)
+    Nothing -> ([] ++)
+growDissimilarListSerial' d alph [] ser =
+    let lst = case serialToRegex ser of
+                Just r -> if simplified r then ([r] ++) else ([] ++)
+                Nothing -> ([] ++)
+        dm1 = d - 1
+        out = lst
+            . growDissimilarListSerial' dm1 alph alph (SEmpty ser)
+            . growDissimilarListSerial' dm1 alph alph (SEps ser)
+            . growDissimilarListSerial' dm1 alph alph (SNot ser)
+            . growDissimilarListSerial' dm1 alph alph (SStar ser)
+            . growDissimilarListSerial' dm1 alph alph (SUnion ser)
+            . growDissimilarListSerial' dm1 alph alph (SIntersect ser)
+            . growDissimilarListSerial' dm1 alph alph (SDot ser)
+    in out
+growDissimilarListSerial' d alph (c:cs) ser = (growDissimilarListSerial' (d - 1) alph alph (SCharSet c ser)) 
+                                            . growDissimilarListSerial' d alph cs ser
+
+-- | Grows a list of dissimlar REs using a serial RE construction method. Faster than 'growDisimilarList'.
+growDissimilarListSerial :: Int -> [HashSet Char] -> [Regex]
+growDissimilarListSerial d alph = (growDissimilarListSerial' d alph alph EndSerial) []
+
+-- | Grows the same list as 'growDissimilarList' but faster, using the serial RE method.
+growDissimilarListSerialAB :: Int -> [Regex]
+growDissimilarListSerialAB d = growDissimilarListSerial d [HashSet.singleton 'a', HashSet.singleton 'b', HashSet.fromList "ab"]
+
+-- | Ignore: Unused
+getRegexAttributes:: Regex -> Attributes
+getRegexAttributes r
+    | simplified r = if
+        | isMinimalDfa dfa -> Attributes 1 1 (sizeDfa dfa)
+        | otherwise -> Attributes 1 0 0  
+    | otherwise = Attributes 0 0 0
+    where dfa = constructDfa "ab" r
+
+-- | Ignore: Unused
+mergeAttr:: Attributes -> Attributes -> Attributes
+mergeAttr Default att = att
+mergeAttr att Default = att
+mergeAttr (Attributes dis1 min1 maxC1) (Attributes dis2 min2 maxC2) = Attributes (dis1 + dis2) (min1 + min2) (max maxC1 maxC2)
 
 main = do
     let x = (CharSet $ HashSet.singleton 'a')
     let y = Not (Star (CharSet $ HashSet.singleton 'a'))
-    let lst = growDisimilarList 6
+    let charRanges = [HashSet.singleton 'a', HashSet.singleton 'b', HashSet.fromList "ab"]
+    let lst = growDissimilarListSerialAB 7 
+    --print (serialToRegex (SUnion $ SEps $ SUnion $ SEmpty $ SEps $ SEps EndSerial))
+    print (countAttribute 7 charRanges Default getRegexAttributes mergeAttr)
+    --print (length lst)
+    --printElements lst
     putStrLn ((show (length lst)) ++ "  " ++ (show (countMinimalDfas "ab" lst)))
