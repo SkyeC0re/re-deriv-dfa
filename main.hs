@@ -10,15 +10,16 @@ import Language.HaLex.Dfa as Dfa
 import Data.Hashable as Hashable
 import GHC.Generics (Generic)
 import Language.HaLex.Minimize as Min
+import Test.QuickCheck (quickCheck)
 import Test.QuickCheck.Arbitrary
 import Test.QuickCheck.Gen (elements)
 import Test.QuickCheck.Gen as Gen
 import Control.Applicative
 
 -- | A Recursive Data Structure to represent the regular expression 
-data Regex  = Empty
+data Regex  = CharSet (HashSet Char)
+            | Empty
             | Eps
-            | CharSet (HashSet Char)
             | Not Regex
             | Star Regex
             | Intersect Regex Regex
@@ -48,44 +49,48 @@ instance Hashable Regex
 
 -- | Pretty print regex
 instance Show Regex where
-    show (Union r s) = "(" ++ (show r) ++ "+" ++ (show s) ++ ")"
-    show (Intersect r s) = "(" ++ (show r) ++ "&" ++ (show s) ++ ")"
-    show (Dot r s) = "(" ++ (show r) ++ "." ++ (show s) ++ ")"
-    show (Not r) = "~(" ++ (show r) ++ ")"
-    show (Star r) = "*(" ++ (show r) ++ ")"
+    show (Union r s) = "+" ++ (show r) ++ (show s)
+    show (Intersect r s) = "&" ++ (show r) ++ (show s)
+    show (Dot r s) = "." ++ (show r) ++ (show s)
+    show (Not r) = "~" ++ (show r)
+    show (Star r) = "*" ++ (show r)
     show (CharSet hs) = "[" ++ (HashSet.toList hs) ++ "]"
     show Empty = "0"
     show Eps = "e"
 
 instance Arbitrary Regex where
-    arbitrary =  chooseInt (1,30) >>= genRegex
+    arbitrary = genRegex
+
+
+genRegex :: Gen Regex
+genRegex = chooseInt (1,30) >>= genSzdRegex
 
 -- | INTERNAL. Generates a random RE of the specified size
-genRegex:: Int -> (Gen Regex)
-genRegex 0 = elements [Empty]
-genRegex 1 = generateRandomElem
-genRegex 2 = generateRandomUnOp <*> generateRandomElem
-genRegex d = 
+genSzdRegex:: Int -> (Gen Regex)
+genSzdRegex 0 = elements [Empty]
+genSzdRegex 1 = generateRandomElem
+genSzdRegex 2 = generateRandomUnOp <*> generateRandomElem
+genSzdRegex d = 
     let dm1 = d - 1
-    in frequency [(2, genUnOpOuter dm1), (3, chooseInt (1, dm1 - 1) >>= (genBinOpOuter dm1))]
+    in frequency [(1, genUnOpOuter dm1), (90, chooseInt (1, dm1 - 1) >>= (genBinOpOuter dm1))]
 
--- | INTERNAL. Helper function for 'genRegex'
+-- | INTERNAL. Helper function for 'genSzdRegex'
 genBinOpOuter:: Int -> Int -> (Gen Regex)
-genBinOpOuter d ld = (generateRandomBinOp <*> (genRegex ld)) <*> (genRegex (d - ld))
+genBinOpOuter d ld = (generateRandomBinOp <*> (genSzdRegex ld)) <*> (genSzdRegex (d - ld))
 
--- | INTERNAL. Helper function for 'genRegex'
+-- | INTERNAL. Helper function for 'genSzdRegex'
 genUnOpOuter:: Int -> (Gen Regex)
-genUnOpOuter d = generateRandomUnOp <*> (genRegex d)
+genUnOpOuter d = generateRandomUnOp <*> (genSzdRegex d)
 
--- | INTERNAL. Helper function for 'genRegex'
+-- | INTERNAL. Helper function for 'genSzdRegex'
 generateRandomElem:: Gen Regex
 generateRandomElem = elements [Empty, Eps, CharSet (HashSet.singleton 'a'), CharSet (HashSet.singleton 'b'), CharSet (HashSet.fromList "ab")]
 
--- | INTERNAL. Helper function for 'genRegex'
+-- | INTERNAL. Helper function for 'genSzdRegex'
 generateRandomUnOp:: (Gen (Regex -> Regex))
 generateRandomUnOp = elements [Not, Star]
 
--- | INTERNAL. Helper function for 'genRegex'
+-- | INTERNAL. Helper function for 'genSzdRegex'
 generateRandomBinOp:: (Gen (Regex -> Regex -> Regex))
 generateRandomBinOp = elements [Union, Intersect, Dot]
 
@@ -108,7 +113,7 @@ regexNullable r
     | otherwise = Empty
 
 -- | Returns 'True' if the expression nullable, 'False' otherwise.
-nullable::Regex -> Bool
+nullable:: Regex -> Bool
 nullable Empty = False
 nullable Eps = True
 nullable (CharSet _) = False
@@ -134,7 +139,12 @@ deriv Eps _ = Empty
 
 -- | Simplifies a regex with an outer 'Union' operator.
 simplifyUnion:: Regex -> Regex
-simplifyUnion union = unpackUnionList (Sort.uniqueSort (simplifiedUnionList union))
+simplifyUnion union = (unpackUnionList . mergeUnionCharSets . Sort.uniqueSort . simplifiedUnionList) union
+
+-- | Merges the first CharSets in a sorted list. They are guaranteed to be first from the derived order of the constructor.
+mergeUnionCharSets:: [Regex] -> [Regex]
+mergeUnionCharSets ((CharSet sa):(CharSet sb):lst) = mergeUnionCharSets ((CharSet (HashSet.union sa sb)):lst)
+mergeUnionCharSets lst = lst
 
 -- | Creates a list from the operands of nested 'Union' operators.
 simplifiedUnionList:: Regex -> [Regex]
@@ -224,6 +234,8 @@ simplifiedUnion (Union Empty _) = False
 simplifiedUnion (Union _ Empty) = False
 simplifiedUnion (Union (Not Empty) _) = False
 simplifiedUnion (Union _ (Not Empty)) = False
+simplifiedUnion (Union (CharSet _) (Union (CharSet _) _)) = False
+simplifiedUnion (Union (CharSet _) (CharSet _)) = False
 simplifiedUnion (Union r (Union s1 s2))
     | r < s1 = simplifiedUnion (Union s1 s2)
     | otherwise = False
@@ -280,15 +292,15 @@ findTransition tt def inst sy = case (HashMap.lookup inst tt) of
                     Nothing -> def
                     Just outst -> outst
 
+
+
 -- | Constructs a DFA from a RE
 constructDfa:: [Char] -> Regex -> (Dfa Regex Char)
 constructDfa alph r = 
     let sr = simplify r
         tt = ttConstruct (HashMap.singleton sr (HashMap.empty)) alph alph sr
-        fs = if
-            | HashMap.member Eps tt -> [Eps]
-            | otherwise -> []
         sts = HashMap.keys tt
+        fs = Prelude.filter (nullable) sts
     in Dfa alph sts sr fs (findTransition tt Empty)
 
 -- | Constructs delta as a transposition table.
@@ -513,18 +525,37 @@ mergeAttr Default att = att
 mergeAttr att Default = att
 mergeAttr (Attributes dis1 min1 maxC1) (Attributes dis2 min2 maxC2) = Attributes (dis1 + dis2) (min1 + min2) (max maxC1 maxC2)
 
+-- | INTERNAL: Converts the Dfa transitions to a dot format
+dfaLnks2Dot:: [Regex] -> [Char] -> (Regex -> Char -> Regex) -> [Char] -> String
+dfaLnks2Dot [] _ _ _   = []
+dfaLnks2Dot (r:rs) alph hs [] = dfaLnks2Dot rs alph hs alph
+dfaLnks2Dot (r:rs) alph hs (c:cs) = "\"" ++ (show r) ++ "\" -> \"" ++ (show (hs r c))  ++ "\"[label=\"" ++ [c] ++ "\"]\n" ++ (dfaLnks2Dot (r:rs) alph hs cs)
 
-dfaSts2Dot:: [Regex] -> [Char] -> (Regex -> Char -> Regex) -> [Char] -> String
-dfaSts2Dot [] _ _ _   = []
-dfaSts2Dot (r:rs) alph hs [] = dfaSts2Dot rs alph hs alph
-dfaSts2Dot (r:rs) alph hs (c:cs) = "\"" ++ (show r) ++ "\" -> \"" ++ (show (hs r c))  ++ "\"[label=\"" ++ [c] ++ "\"]\n" ++ (dfaSts2Dot (r:rs) alph hs cs)   
+-- | INTERNAL: Converts the Dfa transitions to a dot format
+dfaFsts2Dot:: [Regex] -> String
+dfaFsts2Dot []  = []
+dfaFsts2Dot (r:rs) = "\"" ++ (show r) ++ "\"[shape=\"doublecircle\"]\n" ++ (dfaFsts2Dot rs)
 
+-- | Computes a string dot representation for graphViz for a DFA.
 dfa2Dot:: (Dfa Regex Char) -> String -> String
-dfa2Dot (Dfa alph sts strt fsts tf) name = "digraph " ++ name ++ " {\n rankdir = LR ;\n" ++ (dfaSts2Dot sts alph tf alph)  ++ "\n}"
+dfa2Dot (Dfa alph sts strt fsts tf) name = "digraph " 
+                                            ++ name 
+                                            ++ "{\n rankdir = LR ;\n{\n"
+                                            ++ "\"startS\"[style=\"invis\"]\n"
+                                            ++ (dfaFsts2Dot fsts)
+                                            ++  "}\n"
+                                            ++ "\"startS\" -> \"" ++ (show strt) ++ "\"[color=\"green\"]"
+                                            ++ (dfaLnks2Dot sts alph tf alph)  
+                                            ++ "\n}"
 
+-- | Creates a .dot file representing the DFA
 dfa2Dot2File:: (Dfa Regex Char) -> String -> IO()
 dfa2Dot2File dfa name = do
     writeFile (name ++ ".dot") (dfa2Dot dfa name)
+
+prop_minimal_sanity:: Regex -> Bool
+prop_minimal_sanity r = (simplified r) == ((simplify r) == r)
+    
 
 main = do
     let x = Dot (CharSet $ HashSet.singleton 'a') (Not (Dot (CharSet $ HashSet.singleton 'a') (CharSet $ HashSet.singleton 'a')))
@@ -534,6 +565,8 @@ main = do
     print (constructDfa "ab" x) 
     dfa2Dot2File (constructDfa "ab" x) "Test"
     print x
+    quickCheck prop_minimal_sanity
+    Gen.sample genRegex
     --print (serialToRegex (SUnion $ SEps $ SUnion $ SEmpty $ SEps $ SEps EndSerial))
     print ("Disimilar Regexes Attributes: Amount | Amount which forms Minimal DFAs | Maximum length of minimal Dfa")
     print ("All REs up to size 1")
