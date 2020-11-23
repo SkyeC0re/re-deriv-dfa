@@ -10,8 +10,10 @@ import Language.HaLex.Dfa as Dfa
 import Data.Hashable as Hashable
 import GHC.Generics (Generic)
 import Language.HaLex.Minimize as Min
-import Language.HaLex.FaAsDiGraph as Viz
-
+import Test.QuickCheck.Arbitrary
+import Test.QuickCheck.Gen (elements)
+import Test.QuickCheck.Gen as Gen
+import Control.Applicative
 
 -- | A Recursive Data Structure to represent the regular expression 
 data Regex  = Empty
@@ -22,10 +24,9 @@ data Regex  = Empty
             | Intersect Regex Regex
             | Union Regex Regex
             | Dot Regex Regex
-            deriving (Show, Generic, Ord, Eq)
+            deriving (Generic, Ord, Eq)
 
-data RegexSerial = Invalid 
-                 | EndSerial
+data RegexSerial = EndSerial
                  | SEmpty RegexSerial
                  | SEps RegexSerial
                  | SCharSet (HashSet Char) RegexSerial
@@ -44,6 +45,49 @@ data Attributes = Attributes Integer Integer Int
 
 -- | Hashability is reguired to store unique states in a set
 instance Hashable Regex
+
+-- | Pretty print regex
+instance Show Regex where
+    show (Union r s) = "(" ++ (show r) ++ "+" ++ (show s) ++ ")"
+    show (Intersect r s) = "(" ++ (show r) ++ "&" ++ (show s) ++ ")"
+    show (Dot r s) = "(" ++ (show r) ++ "." ++ (show s) ++ ")"
+    show (Not r) = "~(" ++ (show r) ++ ")"
+    show (Star r) = "*(" ++ (show r) ++ ")"
+    show (CharSet hs) = "[" ++ (HashSet.toList hs) ++ "]"
+    show Empty = "0"
+    show Eps = "e"
+
+instance Arbitrary Regex where
+    arbitrary =  chooseInt (1,30) >>= genRegex
+
+-- | INTERNAL. Generates a random RE of the specified size
+genRegex:: Int -> (Gen Regex)
+genRegex 0 = elements [Empty]
+genRegex 1 = generateRandomElem
+genRegex 2 = generateRandomUnOp <*> generateRandomElem
+genRegex d = 
+    let dm1 = d - 1
+    in frequency [(2, genUnOpOuter dm1), (3, chooseInt (1, dm1 - 1) >>= (genBinOpOuter dm1))]
+
+-- | INTERNAL. Helper function for 'genRegex'
+genBinOpOuter:: Int -> Int -> (Gen Regex)
+genBinOpOuter d ld = (generateRandomBinOp <*> (genRegex ld)) <*> (genRegex (d - ld))
+
+-- | INTERNAL. Helper function for 'genRegex'
+genUnOpOuter:: Int -> (Gen Regex)
+genUnOpOuter d = generateRandomUnOp <*> (genRegex d)
+
+-- | INTERNAL. Helper function for 'genRegex'
+generateRandomElem:: Gen Regex
+generateRandomElem = elements [Empty, Eps, CharSet (HashSet.singleton 'a'), CharSet (HashSet.singleton 'b'), CharSet (HashSet.fromList "ab")]
+
+-- | INTERNAL. Helper function for 'genRegex'
+generateRandomUnOp:: (Gen (Regex -> Regex))
+generateRandomUnOp = elements [Not, Star]
+
+-- | INTERNAL. Helper function for 'genRegex'
+generateRandomBinOp:: (Gen (Regex -> Regex -> Regex))
+generateRandomBinOp = elements [Union, Intersect, Dot]
 
 -- | Returns the size of a Regular expression. The empty expression (Empty), the empty string (Eps) and
 -- any character set {x1, x2, ..., xn} is considered length 1. All operators contribute 1 to the length.
@@ -469,13 +513,43 @@ mergeAttr Default att = att
 mergeAttr att Default = att
 mergeAttr (Attributes dis1 min1 maxC1) (Attributes dis2 min2 maxC2) = Attributes (dis1 + dis2) (min1 + min2) (max maxC1 maxC2)
 
+
+dfaSts2Dot:: [Regex] -> [Char] -> (Regex -> Char -> Regex) -> [Char] -> String
+dfaSts2Dot [] _ _ _   = []
+dfaSts2Dot (r:rs) alph hs [] = dfaSts2Dot rs alph hs alph
+dfaSts2Dot (r:rs) alph hs (c:cs) = "\"" ++ (show r) ++ "\" -> \"" ++ (show (hs r c))  ++ "\"[label=\"" ++ [c] ++ "\"]\n" ++ (dfaSts2Dot (r:rs) alph hs cs)   
+
+dfa2Dot:: (Dfa Regex Char) -> String -> String
+dfa2Dot (Dfa alph sts strt fsts tf) name = "digraph " ++ name ++ " {\n rankdir = LR ;\n" ++ (dfaSts2Dot sts alph tf alph)  ++ "\n}"
+
+dfa2Dot2File:: (Dfa Regex Char) -> String -> IO()
+dfa2Dot2File dfa name = do
+    writeFile (name ++ ".dot") (dfa2Dot dfa name)
+
 main = do
-    let x = (CharSet $ HashSet.singleton 'a')
+    let x = Dot (CharSet $ HashSet.singleton 'a') (Not (Dot (CharSet $ HashSet.singleton 'a') (CharSet $ HashSet.singleton 'a')))
     let y = Not (Star (CharSet $ HashSet.singleton 'a'))
     let charRanges = [HashSet.singleton 'a', HashSet.singleton 'b', HashSet.fromList "ab"]
-    let lst = growDissimilarListSerialAB 7 
+    let lst = growDissimilarListSerialAB 7
+    print (constructDfa "ab" x) 
+    dfa2Dot2File (constructDfa "ab" x) "Test"
+    print x
     --print (serialToRegex (SUnion $ SEps $ SUnion $ SEmpty $ SEps $ SEps EndSerial))
+    print ("Disimilar Regexes Attributes: Amount | Amount which forms Minimal DFAs | Maximum length of minimal Dfa")
+    print ("All REs up to size 1")
+    print (countAttribute 1 charRanges Default getRegexAttributes mergeAttr)
+    print ("All REs up to size 2")
+    print (countAttribute 2 charRanges Default getRegexAttributes mergeAttr)
+    print ("All REs up to size 3")
+    print (countAttribute 3 charRanges Default getRegexAttributes mergeAttr)
+    print ("All REs up to size 4")
+    print (countAttribute 4 charRanges Default getRegexAttributes mergeAttr)
+    print ("All REs up to size 5")
+    print (countAttribute 5 charRanges Default getRegexAttributes mergeAttr)
+    print ("All REs up to size 6")
+    print (countAttribute 6 charRanges Default getRegexAttributes mergeAttr)
+    print ("All REs up to size 7")
     print (countAttribute 7 charRanges Default getRegexAttributes mergeAttr)
-    --print (length lst)
-    --printElements lst
-    putStrLn ((show (length lst)) ++ "  " ++ (show (countMinimalDfas "ab" lst)))
+    print ("All REs up to size 8")
+    print (countAttribute 8 charRanges Default getRegexAttributes mergeAttr)
+    --putStrLn ((show (length lst)) ++ "  " ++ (show (countMinimalDfas "ab" lst)))
