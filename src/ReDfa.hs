@@ -2,6 +2,9 @@
     Module for creating, transforming, vizualizing and simplifying Regular Expressions (REs)
     and Deterministic Finite Automata (DFAs) using the notions and principles described in the paper:
     'Regular-expression derivatives re-examined' by Scott Owens, John Reppy and Aaron Turon.
+
+    -- Creator: Christoff van Zyl
+    -- Email: Stoffel1997@Gmail.com | 20072015@sun.ac.za
 -}
 
 {-# LANGUAGE DeriveGeneric #-}
@@ -286,8 +289,17 @@ unpackDotList [r] = r
 unpackDotList (r:rs) = Dot r (unpackDotList rs)
 
 {-|
-    Simplifies a regular expression. Specifically it uses the notions of dissimilarity described in the paper:
-    
+    Simplifies a regular expression. Specifically it uses the notions of dissimilarity described in the paper listed
+    at the start. By combining these dissimilarity principles, excluding the incorrect notion for ~S for the
+    character set S, as well as a required format, all similar REs can be reduced to a single 'simplified' RE.
+
+    The format here is that if smaller operands precede larger operands for Union and Intersection, and
+    given a set of nested operators which are all either Union or Intersection, the following format describes the
+    simplified RE:
+    O1(r1 (O2 r2 (O3 ...))) where Ox refers to the operator and r1, r2, ... refers to operators of increasing order, based
+    on some ordering method.
+
+    For example Union(Union(r1 r2) r3) is considered not simplified, but Union(r1 Union(r2 r3)) is as long as r1<r2<r3.   
 -}
 simplify:: Regex -> Regex
 simplify (Union r1 r2) = simplifyUnion (Union r1 r2)
