@@ -17,14 +17,14 @@ For each i, the the program produces:
   - The amount of dREs which produce minimal DFAs using the derivative method (mDFA).
   - The maximum size across all of the aforementioned mDFAs.
 
-```haskell
+```batch
 stack build
 stack exec re-deriv-dfa-exe
 ```
 
 To run the test suite, use:
 
-```haskell
+```batch
 stack test
 ```
 
