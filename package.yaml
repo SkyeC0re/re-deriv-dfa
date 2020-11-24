@@ -22,10 +22,12 @@ description:         Please see the README on GitHub at <https://github.com/gith
 dependencies:
 - unordered-containers
 - QuickCheck
-- HaLeX >= 1.2.6
+- HaLeX
 - sort
 - base >= 4.7 && < 5
 - hashable
+- hspec
+- hspec-core
 
 library:
   source-dirs: src
