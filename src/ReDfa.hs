@@ -14,6 +14,9 @@ module ReDfa
     ( Regex (..)
     , sizeRe
     , Dfa.sizeDfa
+    , Dfa.dfaaccept
+    , Min.minimizeDfa
+    , Dfa (..)
     , simplify
     , simplified
     , nullable
@@ -23,10 +26,13 @@ module ReDfa
     , constructDfa
     , dfa2Dot2File
     , dfa2Dot
+    , deriv
     , isMinimalDfa
     , isMinimalRe
     , parse
     , parseNF
+    , genRegex
+    , match
     ) where
 
 import Prelude
@@ -38,8 +44,7 @@ import Data.Hashable as Hashable
 import GHC.Generics (Generic)
 import Language.HaLex.Minimize as Min
 import Test.QuickCheck.Arbitrary
-import Test.QuickCheck.Gen (elements)
-import Test.QuickCheck.Gen as Gen
+import Test.QuickCheck.Gen
 import Control.Applicative
 
 {-|
@@ -90,7 +95,7 @@ instance Arbitrary Regex where
     INTERNAL. A generator for REs between size 1 and 30 with the alphabet {a, b}
 -}
 genRegex :: Gen Regex
-genRegex = choose (1,30) >>= genSzdRegex
+genRegex = choose (1,25) >>= genSzdRegex
 
 {-|
     INTERNAL. A generator for a RE of the specified size.
@@ -147,6 +152,16 @@ sizeRe (Star r) = 1 + (sizeRe r)
 sizeRe (Intersect r1 r2) = 1 + (sizeRe r1) + (sizeRe r2)
 sizeRe (Union r1 r2) = 1 + (sizeRe r1) + (sizeRe r2)
 sizeRe (Dot r1 r2) =  1 + (sizeRe r1) + (sizeRe r2)
+
+{-|
+    Checks if a RE matches a string, using derivatives and nullability.
+-}
+match:: Regex -> [Char] -> Bool
+match r [] = nullable (simplify r)
+match r (c:cs) = match (deriv (simplify r) c) cs
+
+sameMatchReDfa:: Regex -> (Dfa Regex Char) -> [Char] -> Bool
+sameMatchReDfa r dfa str = match r str == dfaaccept dfa str
 
 {-|
     Returns 'Eps' if the expression is nullable, 'Empty' otherwise.
@@ -228,7 +243,7 @@ unpackUnionList (r:rs) = Union r (unpackUnionList rs)
     INTERNAL. Simplifies a RE with an outer 'Intersect' operator.
 -}
 simplifyIntersect:: Regex -> Regex
-simplifyIntersect intersect = unpackIntersectList (Sort.uniqueSort (simplifiedIntersectList intersect))
+simplifyIntersect intersect = (unpackIntersectList . Sort.uniqueSort . simplifiedIntersectList) intersect
 
 {-|
     INTERNAL. Creates a list from the operands of nested 'Intersect' operators.
@@ -260,7 +275,7 @@ unpackIntersectList (r:rs) = Intersect r (unpackIntersectList rs)
     Simplifies a RE with an outer 'Dot' operator.
 -}
 simplifyDot:: Regex -> Regex
-simplifyDot dot = unpackDotList $ simplifiedDotList dot
+simplifyDot dot = (unpackDotList . filterDupStar . simplifiedDotList) dot
 
 {-|
     Creates a list from the operands of nested 'Dot' operators.
@@ -280,6 +295,16 @@ mergeDotList _ [Empty] = [Empty]
 mergeDotList [Eps] lst = lst 
 mergeDotList lst [Eps] = lst
 mergeDotList l1 l2 = l1 ++ l2
+
+{-|
+    INTERNAL. Filters out duplicate Kleene Stars that are next to each other in the 'Dot' list.
+-}
+filterDupStar:: [Regex] -> [Regex]
+filterDupStar ((Star r1):(Star r2):rs)
+    | r1 == r2 = filterDupStar ((Star r2):rs)
+    | otherwise = (Star r1):(filterDupStar ((Star r2):rs))
+filterDupStar (r:rs) = r:(filterDupStar rs)
+filterDupStar lst = lst
 
 {-|
     INTERNAL. Recompiles a simplified 'Dot' list back to a regular expression with a standard format.
@@ -306,7 +331,7 @@ simplify (Union r1 r2) = simplifyUnion (Union r1 r2)
 simplify (Intersect r1 r2) = simplifyIntersect (Intersect r1 r2)
 simplify (Dot r1 r2) = simplifyDot (Dot r1 r2)
 simplify (Star r) = case simplify r of
-    (Star s) -> s
+    (Star s) -> (Star s)
     Eps -> Eps
     Empty -> Eps
     s -> Star s
@@ -358,6 +383,10 @@ simplifiedDot Empty _ = False
 simplifiedDot _ Empty = False
 simplifiedDot Eps _ = False
 simplifiedDot _ Eps = False
+simplifiedDot (Star rIn) s = case s of
+    (Star sIn)       -> if rIn == sIn then False else (simplified (Star rIn)) && (simplified s)
+    (Dot (Star sIn) _) -> if rIn == sIn then False else (simplified (Star rIn)) && (simplified s)
+    _                -> (simplified (Star rIn)) && (simplified s)
 simplifiedDot r s = (simplified r) && (simplified s)
 
 {-|
