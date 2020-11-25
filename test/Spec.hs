@@ -4,6 +4,7 @@ import Test.QuickCheck
 import ReDfa (Regex)
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Data.HashSet as HashSet
+import Data.List
 import Test.QuickCheck.Gen
 import Control.Applicative
 import Test.QuickCheck.Arbitrary
@@ -37,6 +38,13 @@ prop_simplified_sanity r = (simplified (simplify r)) == True
 prop_simplify_deriv_transitivity :: Regex -> Bool
 prop_simplify_deriv_transitivity r = simplify (deriv r 'a') == simplify (deriv (simplify r) 'a')
 
+prop_isMinimalRe_eq_simplified :: Regex -> Bool
+prop_isMinimalRe_eq_simplified r = isMinimalRe r == simplified r
+
+
+
+
+
 testNullable :: Spec
 testNullable = do
     describe "Testing nullable base cases" $ do
@@ -56,6 +64,7 @@ testNullable = do
             nullable (Union (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" ))) `shouldBe` (nullable (CharSet (HashSet.fromList "a" ))) || (nullable (CharSet (HashSet.fromList "b" )))
         it "Base case: nullable (Intersect 'a' 'b')" $
             nullable (Intersect (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" ))) `shouldBe` (nullable (CharSet (HashSet.fromList "a" ))) && (nullable (CharSet (HashSet.fromList "b" )))
+
 
 testSimplified :: Spec
 testSimplified = do
@@ -88,24 +97,54 @@ testSimplify = do
             simplified (simplify (Union (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" )))) `shouldBe` True
         it "Base case: simplify (Intersect 'a' 'b')" $
             simplified (simplify (Intersect (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" )))) `shouldBe` True
-            
+
+
+testParseNF :: Spec
+testParseNF = do
+    let dissList = growDissimilarListSerialAB 7
+    describe "Test if parsed regexes are in dissimilarListAB" $ do
+        it "Base case: test parser empty" $
+            elem (parseNF "0") (dissList) `shouldBe` True
+        it "Base case: test parser '[a]'" $
+            elem (parseNF "[a]") (dissList) `shouldBe` True
+        it "Intermdiate case: test parser '[a].[b]'" $
+            elem (parseNF ".[a][b]") (dissList) `shouldBe` True
+        it "Intermediate case: test parser [a].e" $
+            elem (parseNF ".[a]e") (dissList) `shouldBe` False
+
+
+testGrowStrings :: Spec
+testGrowStrings = do
+    let 
+        dissList = growDissimilarListSerialAB 7
+        validStrList = growValidStringsAB 7
+    describe "Test growString function" $ do
+        it "Reges from growString matches regexes from growDissimilarList" $
+            Data.List.sort (Data.List.filter simplified (Data.List.map parseNF validStrList)) == Data.List.sort (dissList) 
 
 
 main :: IO ()
 main = hspec $ do
-    testNullable
-    testSimplified
-    testSimplify
+  testNullable
+  testSimplified
+  testSimplify
 
-    describe "ReDfa.simplify" $ do
-        modifyMaxSuccess (const 1000) $ it "is indempotent" $ property $
-            prop_indemp_simplify
-    describe "ReDfa.simplified" $ do
-        modifyMaxSuccess (const 1000) $ it "is indempotent" $ property $
-            prop_simplified_sanity
-    describe "ReDfa.constructDfa" $ do
-        modifyMaxSuccess (const 1000) $ it "creates equivalent DFAs" $ property $
-            prop_RE_equiv_DFA
-    describe "ReDfa.deriv" $ do
-        modifyMaxSuccess (const 1000) $ it "does not affect similarity" $ property $
-            prop_RE_equiv_DFA
+  testParseNF
+
+  describe "ReDfa.simplify" $ do
+    modifyMaxSuccess (const 1000) $ it "is indempotent" $ property $
+      prop_indemp_simplify
+  describe "ReDfa.simplified" $ do
+    modifyMaxSuccess (const 1000) $ it "simplified sanity" $ property $
+      prop_simplified_sanity
+  describe "ReDfa.isMinimalRE" $ do
+    modifyMaxSuccess (const 1000) $ it "isMinimalRE match simplified" $ property $
+      prop_isMinimalRe_eq_simplified
+  describe "ReDfa.constructDfa" $ do
+    modifyMaxSuccess (const 1000) $ it "creates equivalent DFAs" $ property $
+      prop_RE_equiv_DFA
+  describe "ReDfa.deriv" $ do
+    modifyMaxSuccess (const 1000) $ it "does not affect similarity" $ property $
+      prop_RE_equiv_DFA
+
+
