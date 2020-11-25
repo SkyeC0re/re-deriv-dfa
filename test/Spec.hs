@@ -4,6 +4,7 @@ import Test.QuickCheck
 import ReDfa (Regex)
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Data.HashSet as HashSet
+import Data.List
 
 prop_indemp_simplify :: Regex -> Bool
 prop_indemp_simplify r = (simplify (simplify r)) == simplify r
@@ -11,6 +12,13 @@ prop_indemp_simplify r = (simplify (simplify r)) == simplify r
 
 prop_simplified_sanity :: Regex -> Bool
 prop_simplified_sanity r = (simplified (simplify r)) == True
+
+
+prop_isMinimalRe_eq_simplified :: Regex -> Bool
+prop_isMinimalRe_eq_simplified r = isMinimalRe r == simplified r
+
+
+
 
 
 testNullable :: Spec
@@ -32,6 +40,7 @@ testNullable = do
             nullable (Union (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" ))) `shouldBe` (nullable (CharSet (HashSet.fromList "a" ))) || (nullable (CharSet (HashSet.fromList "b" )))
         it "Base case: nullable (Intersect 'a' 'b')" $
             nullable (Intersect (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" ))) `shouldBe` (nullable (CharSet (HashSet.fromList "a" ))) && (nullable (CharSet (HashSet.fromList "b" )))
+
 
 testSimplified :: Spec
 testSimplified = do
@@ -64,7 +73,30 @@ testSimplify = do
             simplified (simplify (Union (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" )))) `shouldBe` True
         it "Base case: simplify (Intersect 'a' 'b')" $
             simplified (simplify (Intersect (CharSet (HashSet.fromList "a" )) (CharSet (HashSet.fromList "b" )))) `shouldBe` True
-            
+
+
+testParseNF :: Spec
+testParseNF = do
+    let dissList = growDissimilarListSerialAB 7
+    describe "Test if parsed regexes are in dissimilarListAB" $ do
+        it "Base case: test parser empty" $
+            elem (parseNF "0") (dissList) `shouldBe` True
+        it "Base case: test parser '[a]'" $
+            elem (parseNF "[a]") (dissList) `shouldBe` True
+        it "Intermdiate case: test parser '[a].[b]'" $
+            elem (parseNF ".[a][b]") (dissList) `shouldBe` True
+        it "Intermediate case: test parser [a].e" $
+            elem (parseNF ".[a]e") (dissList) `shouldBe` False
+
+
+testGrowStrings :: Spec
+testGrowStrings = do
+    let 
+        dissList = growDissimilarListSerialAB 7
+        validStrList = growValidStringsAB 7
+    describe "Test growString function" $ do
+        it "Reges from growString matches regexes from growDissimilarList" $
+            Data.List.sort (Data.List.filter simplified (Data.List.map parseNF validStrList)) == Data.List.sort (dissList) 
 
 
 main :: IO ()
@@ -73,12 +105,17 @@ main = hspec $ do
   testSimplified
   testSimplify
 
+  testParseNF
+
   describe "ReDfa.simplify" $ do
     modifyMaxSuccess (const 1000) $ it "is indempotent" $ property $
       prop_indemp_simplify
   describe "ReDfa.simplified" $ do
-    modifyMaxSuccess (const 1000) $ it "is indempotent" $ property $
+    modifyMaxSuccess (const 1000) $ it "simplified sanity" $ property $
       prop_simplified_sanity
+  describe "ReDfa.isMinimalRE" $ do
+    modifyMaxSuccess (const 1000) $ it "isMinimalRE match simplified" $ property $
+      prop_isMinimalRe_eq_simplified
 
     {-it "returns the first element of an *arbitrary* list" $
       property $ \x xs -> head (x:xs) == (x :: Int)
