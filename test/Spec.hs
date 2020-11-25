@@ -5,6 +5,28 @@ import ReDfa (Regex)
 import Test.Hspec.Core.QuickCheck (modifyMaxSuccess)
 import Data.HashSet as HashSet
 import Data.List
+import Test.QuickCheck.Gen
+import Control.Applicative
+import Test.QuickCheck.Arbitrary
+
+data Rgx1StrMny = Rgx1StrMny Regex [[Char]]
+
+instance Arbitrary Rgx1StrMny where
+    arbitrary = liftA2 Rgx1StrMny genRegex (vectorOf 200 genABWord)
+
+instance Show Rgx1StrMny where
+    show (Rgx1StrMny r _) = show r
+
+genABWord:: Gen [Char]
+genABWord = choose (1, 20) >>= (flip vectorOf) (elements "ab")
+
+sameMatchReDfa:: Regex -> (Dfa Regex Char) -> [Char] -> Bool
+sameMatchReDfa r dfa str = match r str == dfaaccept dfa str
+
+prop_RE_equiv_DFA:: Rgx1StrMny -> Bool
+prop_RE_equiv_DFA (Rgx1StrMny r lst) = 
+    let dfa = constructDfa "ab" r
+    in foldl (\b str -> b && (sameMatchReDfa r dfa str)) True lst
 
 prop_indemp_simplify :: Regex -> Bool
 prop_indemp_simplify r = (simplify (simplify r)) == simplify r
@@ -13,6 +35,8 @@ prop_indemp_simplify r = (simplify (simplify r)) == simplify r
 prop_simplified_sanity :: Regex -> Bool
 prop_simplified_sanity r = (simplified (simplify r)) == True
 
+prop_simplify_deriv_transitivity :: Regex -> Bool
+prop_simplify_deriv_transitivity r = simplify (deriv r 'a') == simplify (deriv (simplify r) 'a')
 
 prop_isMinimalRe_eq_simplified :: Regex -> Bool
 prop_isMinimalRe_eq_simplified r = isMinimalRe r == simplified r
@@ -116,9 +140,11 @@ main = hspec $ do
   describe "ReDfa.isMinimalRE" $ do
     modifyMaxSuccess (const 1000) $ it "isMinimalRE match simplified" $ property $
       prop_isMinimalRe_eq_simplified
+  describe "ReDfa.constructDfa" $ do
+    modifyMaxSuccess (const 1000) $ it "creates equivalent DFAs" $ property $
+      prop_RE_equiv_DFA
+  describe "ReDfa.deriv" $ do
+    modifyMaxSuccess (const 1000) $ it "does not affect similarity" $ property $
+      prop_RE_equiv_DFA
 
-    {-it "returns the first element of an *arbitrary* list" $
-      property $ \x xs -> head (x:xs) == (x :: Int)
 
-    it "throws an exception if used with an empty list" $ do
-      evaluate (head []) `shouldThrow` anyException-}
