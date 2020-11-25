@@ -21,7 +21,6 @@ module ReDfa
     , simplified
     , nullable
     , regexNullable
-    , growDissimilarListSerialAB
     , growValidStringsAB
     , constructDfa
     , dfa2Dot2File
@@ -33,6 +32,9 @@ module ReDfa
     , parseNF
     , genRegex
     , match
+    , prettyS
+    , growValidRE
+    , growValidREAB
     ) where
 
 import Prelude
@@ -86,6 +88,16 @@ instance Show Regex where
     show (CharSet hs) = "[" ++ (HashSet.toList hs) ++ "]"
     show Empty = "0"
     show Eps = "e"
+
+prettyS:: Regex -> [Char]
+prettyS (Union r s) = "(" ++ (prettyS r) ++ "+" ++ (prettyS s) ++ ")"
+prettyS (Intersect r s) = "(" ++ (prettyS r) ++ "&" ++ (prettyS s) ++ ")"
+prettyS (Dot r s) = "(" ++ (prettyS r) ++ "." ++ (prettyS s) ++ ")"
+prettyS (Not r) = "~" ++ (prettyS r)
+prettyS (Star r) = "*" ++ (prettyS r)
+prettyS (CharSet hs) = "[" ++ (HashSet.toList hs) ++ "]"
+prettyS Empty = "0"
+prettyS Eps = "e"
 
 -- | Required to create arbitrary REs for QuickCheck.
 instance Arbitrary Regex where
@@ -352,6 +364,7 @@ simplifiedUnion _ (Not Empty) = False
 simplifiedUnion (CharSet _) (Union (CharSet _) _) = False
 simplifiedUnion (CharSet _) (CharSet _) = False
 simplifiedUnion r (Union s1 s2)
+    | not (simplified r) = False
     | r < s1 = simplifiedUnion s1 s2
     | otherwise = False
 simplifiedUnion r s
@@ -368,6 +381,7 @@ simplifiedIntersect _ Empty = False
 simplifiedIntersect (Not Empty) _ = False
 simplifiedIntersect _ (Not Empty) = False
 simplifiedIntersect r (Intersect s1 s2)
+    | not (simplified r) = False
     | r < s1 = simplifiedIntersect s1 s2
     | otherwise = False
 simplifiedIntersect r s
@@ -555,7 +569,7 @@ splitGrow csets clft d rophs pstr = case clft of
 {-|
     INTERNAL. Helper function for 'growValidStrings'.
 -}
-growValidStrings' :: [[Char]] -> Int -> Int -> [Char] -> ([[Char]] -> [[Char]])
+growValidStrings':: [[Char]] -> Int -> Int -> [Char] -> ([[Char]] -> [[Char]])
 growValidStrings' csets d rophs pstr = if
     | rophs > d -> ([] ++)
     | rophs == 0 -> ((reverse pstr):)
@@ -565,15 +579,20 @@ growValidStrings' csets d rophs pstr = if
     Grows all valid RE strings up to some size with a given set of usable
     characted sets.
 -}
-growValidStrings :: [[Char]] -> Int -> [[Char]]
+growValidStrings:: [[Char]] -> Int -> [[Char]]
 growValidStrings csets d = (growValidStrings' csets d 1 "") []
 
 {-|
      Grows all valid RE strings up to some size with the alphabet {a, b}
 -}
-growValidStringsAB :: Int -> [[Char]]
+growValidStringsAB:: Int -> [[Char]]
 growValidStringsAB d = growValidStrings ["a", "b", "ab"] d
 
+growValidRE:: [[Char]] -> Int -> [Regex]
+growValidRE csets d = Prelude.map parseNF (growValidStrings csets d)
+
+growValidREAB:: Int -> [Regex]
+growValidREAB d = Prelude.map parseNF (growValidStrings ["a", "b", "ab"] d)
 
 -- | INTERNAL. Helper function for 'serialToRegex'
 consumeRegexSerial:: RegexSerial -> ConsumedInfo
